@@ -65,6 +65,9 @@ class SwitcherViewModel: ObservableObject {
     @Published var sdkPath: String?
     @Published var stepOutputs: [StepID: String] = [:]
     @Published var selectedStep: StepID?
+    @Published var isCancelled = false
+
+    private var runningProcess: Process?
 
     private let remoteURL = "https://github.com/zcash/zcash-swift-wallet-sdk"
     private let sdkName = "zcash-swift-wallet-sdk"
@@ -87,6 +90,12 @@ class SwitcherViewModel: ObservableObject {
         guard let step = steps.first(where: { $0.id == stepID }),
               step.state != .pending else { return }
         selectedStep = stepID
+    }
+
+    @MainActor
+    func cancelRun() {
+        isCancelled = true
+        runningProcess?.terminate()
     }
 
     init() {
@@ -159,6 +168,7 @@ class SwitcherViewModel: ObservableObject {
         errorMessage = nil
         stepOutputs = [:]
         selectedStep = nil
+        isCancelled = false
         isRunning = true
 
         var stepList: [SwitcherStep] = [
@@ -173,6 +183,8 @@ class SwitcherViewModel: ObservableObject {
         Task { @MainActor in
             do {
                 for i in stepList.indices {
+                    guard !isCancelled else { break }
+
                     stepList[i].state = .running
                     currentStepID = stepList[i].id
                     selectedStep = stepList[i].id
@@ -224,15 +236,28 @@ class SwitcherViewModel: ObservableObject {
                     steps = stepList
                 }
 
-                currentMode = mode
+                if !isCancelled {
+                    currentMode = mode
+                }
             } catch {
                 if let idx = stepList.firstIndex(where: { $0.state == .running }) {
                     stepList[idx].state = .failed
                     steps = stepList
                 }
-                errorMessage = error.localizedDescription
+                if !isCancelled {
+                    errorMessage = error.localizedDescription
+                }
             }
 
+            if isCancelled {
+                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
+                    stepList[idx].state = .failed
+                    steps = stepList
+                }
+                errorMessage = "Cancelled"
+            }
+
+            runningProcess = nil
             isRunning = false
         }
     }
@@ -425,6 +450,7 @@ class SwitcherViewModel: ObservableObject {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             DispatchQueue.global().async { [weak self] in
                 let process = Process()
+                Task { @MainActor in self?.runningProcess = process }
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = args
                 process.currentDirectoryURL = URL(fileURLWithPath: workingDir)

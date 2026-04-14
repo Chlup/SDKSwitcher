@@ -85,7 +85,26 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .disabled(vm.isRunning || !vm.isConfigured || vm.currentMode == .unknown)
             .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+            .padding(.bottom, vm.isRunning ? 8 : 24)
+
+            // Cancel button
+            if vm.isRunning {
+                Button {
+                    vm.cancelRun()
+                } label: {
+                    Text("Cancel")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.red)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            }
 
             // Steps
             if !vm.steps.isEmpty {
