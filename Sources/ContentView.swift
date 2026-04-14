@@ -6,6 +6,14 @@
 //
 
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
+
+extension String {
+    var abbreviatingWithTildeInPath: String {
+        (self as NSString).abbreviatingWithTildeInPath
+    }
+}
 
 struct ContentView: View {
     @StateObject private var vm = SwitcherViewModel()
@@ -31,6 +39,22 @@ struct ContentView: View {
             }
             .padding(.top, 28)
             .padding(.bottom, 20)
+
+            // Path configuration
+            VStack(alignment: .leading, spacing: 8) {
+                PathRow(
+                    label: "Project",
+                    path: vm.projectDirPath,
+                    action: { pickProjectDir() }
+                )
+                PathRow(
+                    label: "SDK",
+                    path: vm.sdkPath,
+                    action: { pickSDKFolder() }
+                )
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 16)
 
             // Current state
             VStack(spacing: 6) {
@@ -59,7 +83,7 @@ struct ContentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
-            .disabled(vm.isRunning || vm.currentMode == .unknown)
+            .disabled(vm.isRunning || !vm.isConfigured || vm.currentMode == .unknown)
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
 
@@ -94,8 +118,58 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: 340)
+        .frame(width: 480)
         .background(.background)
+    }
+
+    private func pickProjectDir() {
+        let panel = NSOpenPanel()
+        panel.title = "Select project directory"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            vm.setProjectDirPath(url.path)
+        }
+    }
+
+    private func pickSDKFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Select SDK folder"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            vm.setSDKPath(url.path)
+        }
+    }
+}
+
+struct PathRow: View {
+    let label: String
+    let path: String?
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .fontWeight(.medium)
+                .frame(width: 50, alignment: .leading)
+
+            Text(path?.abbreviatingWithTildeInPath ?? "Not set")
+                .font(.caption)
+                .foregroundStyle(path == nil ? .secondary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("Browse") {
+                action()
+            }
+            .font(.caption)
+            .controlSize(.small)
+        }
     }
 }
 

@@ -25,20 +25,73 @@ struct SwitcherStep: Identifiable {
     var state: StepState = .pending
 }
 
+struct SwitcherConfig: Codable {
+    var projectDirPath: String?
+    var sdkPath: String?
+
+    static let filePath: String = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/.sdkswitcher_config.json"
+    }()
+
+    static func load() -> SwitcherConfig {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)),
+              let config = try? JSONDecoder().decode(SwitcherConfig.self, from: data) else {
+            return SwitcherConfig()
+        }
+        return config
+    }
+
+    func save() {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        try? data.write(to: URL(fileURLWithPath: SwitcherConfig.filePath))
+    }
+}
+
 class SwitcherViewModel: ObservableObject {
     @Published var steps: [SwitcherStep] = []
     @Published var isRunning = false
     @Published var errorMessage: String?
     @Published var currentMode: SDKMode = .unknown
+    @Published var projectDirPath: String?
+    @Published var sdkPath: String?
 
-    // Paths — adjust if your setup differs
-    private let pbxprojPath = "/Users/lukaskorba/Dev/Xcode/GitHub/LukasKorba/secant-ios-wallet/secant.xcodeproj/project.pbxproj"
-    private let sdkPath = "/Users/lukaskorba/Dev/Xcode/GitHub/LukasKorba/zcash-swift-wallet-sdk"
     private let remoteURL = "https://github.com/zcash/zcash-swift-wallet-sdk"
     private let sdkName = "zcash-swift-wallet-sdk"
 
+    private var pbxprojPath: String? {
+        guard let projectDirPath else { return nil }
+        return "\(projectDirPath)/secant.xcodeproj/project.pbxproj"
+    }
+
+    var isConfigured: Bool {
+        pbxprojPath != nil && sdkPath != nil
+    }
+
     init() {
+        let config = SwitcherConfig.load()
+        self.projectDirPath = config.projectDirPath
+        self.sdkPath = config.sdkPath
         detectCurrentMode()
+    }
+
+    func setProjectDirPath(_ path: String) {
+        projectDirPath = path
+        saveConfig()
+        detectCurrentMode()
+    }
+
+    func setSDKPath(_ path: String) {
+        sdkPath = path
+        saveConfig()
+        detectCurrentMode()
+    }
+
+    private func saveConfig() {
+        var config = SwitcherConfig()
+        config.projectDirPath = projectDirPath
+        config.sdkPath = sdkPath
+        config.save()
     }
 
     // MARK: - Find the Xcode object ID dynamically
@@ -57,7 +110,8 @@ class SwitcherViewModel: ObservableObject {
 
     @MainActor
     func detectCurrentMode() {
-        guard let contents = try? String(contentsOfFile: pbxprojPath, encoding: .utf8) else {
+        guard let pbxprojPath,
+              let contents = try? String(contentsOfFile: pbxprojPath, encoding: .utf8) else {
             currentMode = .unknown
             return
         }
@@ -76,6 +130,10 @@ class SwitcherViewModel: ObservableObject {
     func switchTo(_ mode: SDKMode) {
         guard !isRunning else { return }
         guard mode != currentMode else { return }
+        guard let pbxprojPath, let sdkPath else {
+            errorMessage = "Project path and SDK path must be configured first."
+            return
+        }
 
         errorMessage = nil
         isRunning = true
@@ -93,7 +151,7 @@ class SwitcherViewModel: ObservableObject {
                 // Step 0: Update project.pbxproj
                 stepList[0].state = .running
                 steps = stepList
-                try updatePbxproj(to: mode)
+                try updatePbxproj(to: mode, pbxprojPath: pbxprojPath, sdkPath: sdkPath)
                 stepList[0].state = .done
                 steps = stepList
 
@@ -154,7 +212,7 @@ class SwitcherViewModel: ObservableObject {
 
     // MARK: - pbxproj manipulation
 
-    private func updatePbxproj(to mode: SDKMode) throws {
+    private func updatePbxproj(to mode: SDKMode, pbxprojPath: String, sdkPath: String) throws {
         var contents = try String(contentsOfFile: pbxprojPath, encoding: .utf8)
 
         guard let refID = findPackageRefID(in: contents) else {
@@ -166,7 +224,7 @@ class SwitcherViewModel: ObservableObject {
         case .local:
             contents = switchToLocal(contents, refID: refID)
         case .remote:
-            contents = try switchToRemote(contents, refID: refID)
+            contents = try switchToRemote(contents, refID: refID, sdkPath: sdkPath)
         case .unknown:
             return
         }
@@ -212,10 +270,10 @@ class SwitcherViewModel: ObservableObject {
         return result
     }
 
-    private func switchToRemote(_ contents: String, refID: String) throws -> String {
+    private func switchToRemote(_ contents: String, refID: String, sdkPath: String) throws -> String {
         var result = contents
 
-        let version = try detectLatestSDKVersion()
+        let version = try detectLatestSDKVersion(sdkPath: sdkPath)
 
         // 1. Remove the local definition entry FIRST (before comments change)
         let localDefPattern = "\t\t\(refID) /\\* XCLocalSwiftPackageReference \"\\.\\./\(sdkName)\" \\*/ = \\{[\\s\\S]*?\\n\t\t\\};\n"
@@ -254,7 +312,7 @@ class SwitcherViewModel: ObservableObject {
         return result
     }
 
-    private func detectLatestSDKVersion() throws -> String {
+    private func detectLatestSDKVersion(sdkPath: String) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["describe", "--tags", "--abbrev=0"]
