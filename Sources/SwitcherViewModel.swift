@@ -19,8 +19,16 @@ enum StepState {
     case pending, running, done, skipped, failed
 }
 
+enum StepID: String {
+    case updatePbxproj
+    case initFFI
+    case clearSPMCaches
+    case clearDerivedData
+    case resolvePackages
+}
+
 struct SwitcherStep: Identifiable {
-    let id = UUID()
+    let id: StepID
     let title: String
     var state: StepState = .pending
 }
@@ -139,71 +147,65 @@ class SwitcherViewModel: ObservableObject {
         isRunning = true
 
         var stepList: [SwitcherStep] = [
-            SwitcherStep(title: "Update project.pbxproj"),
-            SwitcherStep(title: mode == .local ? "Init local FFI" : "Skip FFI init"),
-            SwitcherStep(title: "Clear SPM caches"),
-            SwitcherStep(title: "Clear Derived Data"),
-            SwitcherStep(title: "Resolve packages"),
+            SwitcherStep(id: .updatePbxproj, title: "Update project.pbxproj"),
+            SwitcherStep(id: .initFFI, title: mode == .local ? "Init local FFI" : "Skip FFI init"),
+            SwitcherStep(id: .clearSPMCaches, title: "Clear SPM caches"),
+            SwitcherStep(id: .clearDerivedData, title: "Clear Derived Data"),
+//            SwitcherStep(id: .resolvePackages, title: "Resolve packages"),
         ]
         steps = stepList
 
         Task { @MainActor in
             do {
-                // Step 0: Update project.pbxproj
-                stepList[0].state = .running
-                steps = stepList
-                try updatePbxproj(to: mode, pbxprojPath: pbxprojPath, sdkPath: sdkPath)
-                stepList[0].state = .done
-                steps = stepList
+                for i in stepList.indices {
+                    stepList[i].state = .running
+                    steps = stepList
 
-                // Step 1: Init local FFI (local mode only)
-                stepList[1].state = .running
-                steps = stepList
-                if mode == .local {
-                    let localPackagesPath = "\(sdkPath)/LocalPackages"
-                    if !FileManager.default.fileExists(atPath: localPackagesPath) {
+                    switch stepList[i].id {
+                    case .updatePbxproj:
+                        try updatePbxproj(to: mode, pbxprojPath: pbxprojPath, sdkPath: sdkPath)
+                        stepList[i].state = .done
+
+                    case .initFFI:
+                        if mode == .local {
+                            let localPackagesPath = "\(sdkPath)/LocalPackages"
+                            if !FileManager.default.fileExists(atPath: localPackagesPath) {
+                                try await runShell(
+                                    "\(sdkPath)/Scripts/init-local-ffi.sh",
+                                    args: ["--cached"],
+                                    workingDir: sdkPath
+                                )
+                                stepList[i].state = .done
+                            } else {
+                                stepList[i].state = .skipped
+                            }
+                        } else {
+                            stepList[i].state = .skipped
+                        }
+
+                    case .clearSPMCaches:
+                        try clearSPMCaches()
+                        stepList[i].state = .done
+
+                    case .clearDerivedData:
+                        try clearDerivedData()
+                        stepList[i].state = .done
+
+                    case .resolvePackages:
+                        let projectDir = (pbxprojPath as NSString)
+                            .deletingLastPathComponent  // secant.xcodeproj
+                            .appending("/..")           // secant-ios-wallet
                         try await runShell(
-                            "\(sdkPath)/Scripts/init-local-ffi.sh",
-                            args: ["--cached"],
-                            workingDir: sdkPath
+                            "/usr/bin/xcodebuild",
+                            args: ["-resolvePackageDependencies", "-project",
+                                   (pbxprojPath as NSString).deletingLastPathComponent],
+                            workingDir: projectDir
                         )
-                        stepList[1].state = .done
-                    } else {
-                        stepList[1].state = .skipped
+                        stepList[i].state = .done
                     }
-                } else {
-                    stepList[1].state = .skipped
+
+                    steps = stepList
                 }
-                steps = stepList
-
-                // Step 2: Clear SPM caches
-                stepList[2].state = .running
-                steps = stepList
-                try clearSPMCaches()
-                stepList[2].state = .done
-                steps = stepList
-
-                // Step 3: Clear Derived Data
-                stepList[3].state = .running
-                steps = stepList
-                try clearDerivedData()
-                stepList[3].state = .done
-                steps = stepList
-
-                // Step 4: Resolve packages
-                stepList[4].state = .running
-                steps = stepList
-                let projectDir = (pbxprojPath as NSString)
-                    .deletingLastPathComponent  // secant.xcodeproj
-                    .appending("/..")           // secant-ios-wallet
-                try await runShell(
-                    "/usr/bin/xcodebuild",
-                    args: ["-resolvePackageDependencies", "-project",
-                           (pbxprojPath as NSString).deletingLastPathComponent],
-                    workingDir: projectDir
-                )
-                stepList[4].state = .done
-                steps = stepList
 
                 currentMode = mode
             } catch {
@@ -368,6 +370,15 @@ class SwitcherViewModel: ObservableObject {
             let manifestFile = "\(cacheDir)/manifests/ManifestLoading/zcash-swift-wallet-sdk.dia"
             if fm.fileExists(atPath: manifestFile) {
                 try fm.removeItem(atPath: manifestFile)
+            }
+
+            // Remove artifacts/*_zcash_zcash_swift_wallet_sdk_*
+            let artifactsDir = "\(cacheDir)/artifacts"
+            if fm.fileExists(atPath: artifactsDir),
+               let items = try? fm.contentsOfDirectory(atPath: artifactsDir) {
+                for item in items where item.contains("_zcash_zcash_swift_wallet_sdk_") {
+                    try fm.removeItem(atPath: "\(artifactsDir)/\(item)")
+                }
             }
         }
     }
