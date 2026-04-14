@@ -81,6 +81,13 @@ class SwitcherViewModel: ObservableObject {
         pbxprojPath != nil && sdkPath != nil
     }
 
+    var statusText: String {
+        if let runningStep = steps.first(where: { $0.state == .running }) {
+            return runningStep.title
+        }
+        return "Idle"
+    }
+
     var selectedStepOutput: String? {
         guard let selectedStep, let output = stepOutputs[selectedStep], !output.isEmpty else { return nil }
         return output

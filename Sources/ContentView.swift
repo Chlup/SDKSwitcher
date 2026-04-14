@@ -16,7 +16,7 @@ extension String {
 }
 
 struct ContentView: View {
-    @StateObject private var vm = SwitcherViewModel()
+    @ObservedObject var vm: SwitcherViewModel
 
     private var currentColor: Color { vm.currentMode == .local ? .orange : .blue }
     private var currentIcon: String { vm.currentMode == .local ? "internaldrive.fill" : "cloud.fill" }
@@ -173,6 +173,7 @@ struct ContentView: View {
         }
         .frame(width: 480)
         .background(.background)
+        .background(WindowAccessor())
     }
 
     private func pickProjectDir() {
@@ -279,4 +280,33 @@ extension View {
         }
     }
 }
+
+// Installs a delegate on the hosting window to hide on close instead of quitting
+struct WindowAccessor: NSViewRepresentable {
+    private class Delegate: NSObject, NSWindowDelegate {
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            sender.orderOut(nil)
+            return false
+        }
+    }
+
+    private static let delegate = Delegate()
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                window.delegate = WindowAccessor.delegate
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let window = nsView.window, !(window.delegate is Delegate) {
+            window.delegate = WindowAccessor.delegate
+        }
+    }
+}
+
 
