@@ -94,7 +94,11 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(vm.steps) { step in
-                        StepRow(step: step)
+                        StepRow(step: step, isSelected: vm.selectedStep == step.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                vm.selectStep(step.id)
+                            }
                     }
                 }
                 .padding(24)
@@ -118,8 +122,8 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // Shell output
-            if !vm.shellOutput.isEmpty {
+            // Step output
+            if let output = vm.selectedStepOutput {
                 Divider()
                     .padding(.horizontal, 24)
 
@@ -131,13 +135,13 @@ struct ContentView: View {
 
                     ScrollViewReader { proxy in
                         ScrollView {
-                            Text(vm.shellOutput)
+                            Text(output)
                                 .font(.system(size: 10, design: .monospaced))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .id("shellOutputEnd")
                         }
                         .frame(height: 200)
-                        .onChange(of: vm.shellOutput) { _ in
+                        .onChange(of: output) {
                             proxy.scrollTo("shellOutputEnd", anchor: .bottom)
                         }
                     }
@@ -205,6 +209,11 @@ struct PathRow: View {
 
 struct StepRow: View {
     let step: SwitcherStep
+    var isSelected: Bool = false
+
+    private var isTappable: Bool {
+        step.state != .pending
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -236,8 +245,19 @@ struct StepRow: View {
             Text(step.title)
                 .font(.callout)
                 .foregroundStyle(step.state == .pending ? .secondary : .primary)
+                .underline(isSelected)
 
             Spacer()
         }
+        .cursor(isTappable ? .pointingHand : .arrow)
     }
 }
+
+extension View {
+    func cursor(_ cursor: NSCursor) -> some View {
+        onHover { inside in
+            if inside { cursor.push() } else { NSCursor.pop() }
+        }
+    }
+}
+

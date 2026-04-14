@@ -63,7 +63,8 @@ class SwitcherViewModel: ObservableObject {
     @Published var currentMode: SDKMode = .unknown
     @Published var projectDirPath: String?
     @Published var sdkPath: String?
-    @Published var shellOutput: String = ""
+    @Published var stepOutputs: [StepID: String] = [:]
+    @Published var selectedStep: StepID?
 
     private let remoteURL = "https://github.com/zcash/zcash-swift-wallet-sdk"
     private let sdkName = "zcash-swift-wallet-sdk"
@@ -75,6 +76,17 @@ class SwitcherViewModel: ObservableObject {
 
     var isConfigured: Bool {
         pbxprojPath != nil && sdkPath != nil
+    }
+
+    var selectedStepOutput: String? {
+        guard let selectedStep, let output = stepOutputs[selectedStep], !output.isEmpty else { return nil }
+        return output
+    }
+
+    func selectStep(_ stepID: StepID) {
+        guard let step = steps.first(where: { $0.id == stepID }),
+              step.state != .pending else { return }
+        selectedStep = stepID
     }
 
     init() {
@@ -145,7 +157,8 @@ class SwitcherViewModel: ObservableObject {
         }
 
         errorMessage = nil
-        shellOutput = ""
+        stepOutputs = [:]
+        selectedStep = nil
         isRunning = true
 
         var stepList: [SwitcherStep] = [
@@ -161,6 +174,8 @@ class SwitcherViewModel: ObservableObject {
             do {
                 for i in stepList.indices {
                     stepList[i].state = .running
+                    currentStepID = stepList[i].id
+                    selectedStep = stepList[i].id
                     steps = stepList
 
                     switch stepList[i].id {
@@ -398,9 +413,12 @@ class SwitcherViewModel: ObservableObject {
         }
     }
 
+    private var currentStepID: StepID?
+
     @MainActor
     private func appendShellOutput(_ text: String) {
-        shellOutput += text
+        guard let stepID = currentStepID else { return }
+        stepOutputs[stepID, default: ""] += text
     }
 
     private func runShell(_ executable: String, args: [String], workingDir: String) async throws {
