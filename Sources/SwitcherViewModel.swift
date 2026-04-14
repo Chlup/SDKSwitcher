@@ -142,6 +142,7 @@ class SwitcherViewModel: ObservableObject {
             SwitcherStep(title: "Update project.pbxproj"),
             SwitcherStep(title: mode == .local ? "Init local FFI" : "Skip FFI init"),
             SwitcherStep(title: "Clear SPM caches"),
+            SwitcherStep(title: "Clear Derived Data"),
             SwitcherStep(title: "Resolve packages"),
         ]
         steps = stepList
@@ -182,8 +183,15 @@ class SwitcherViewModel: ObservableObject {
                 stepList[2].state = .done
                 steps = stepList
 
-                // Step 3: Resolve packages
+                // Step 3: Clear Derived Data
                 stepList[3].state = .running
+                steps = stepList
+                try clearDerivedData()
+                stepList[3].state = .done
+                steps = stepList
+
+                // Step 4: Resolve packages
+                stepList[4].state = .running
                 steps = stepList
                 let projectDir = (pbxprojPath as NSString)
                     .deletingLastPathComponent  // secant.xcodeproj
@@ -194,7 +202,7 @@ class SwitcherViewModel: ObservableObject {
                            (pbxprojPath as NSString).deletingLastPathComponent],
                     workingDir: projectDir
                 )
-                stepList[3].state = .done
+                stepList[4].state = .done
                 steps = stepList
 
                 currentMode = mode
@@ -360,6 +368,19 @@ class SwitcherViewModel: ObservableObject {
             let manifestFile = "\(cacheDir)/manifests/ManifestLoading/zcash-swift-wallet-sdk.dia"
             if fm.fileExists(atPath: manifestFile) {
                 try fm.removeItem(atPath: manifestFile)
+            }
+        }
+    }
+
+    private func clearDerivedData() throws {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let derivedDataDir = "\(home)/Library/Developer/Xcode/DerivedData"
+
+        if fm.fileExists(atPath: derivedDataDir),
+           let items = try? fm.contentsOfDirectory(atPath: derivedDataDir) {
+            for item in items where item.hasPrefix("secant-") {
+                try fm.removeItem(atPath: "\(derivedDataDir)/\(item)")
             }
         }
     }
