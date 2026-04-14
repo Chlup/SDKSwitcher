@@ -63,6 +63,7 @@ class SwitcherViewModel: ObservableObject {
     @Published var currentMode: SDKMode = .unknown
     @Published var projectDirPath: String?
     @Published var sdkPath: String?
+    @Published var shellOutput: String = ""
 
     private let remoteURL = "https://github.com/zcash/zcash-swift-wallet-sdk"
     private let sdkName = "zcash-swift-wallet-sdk"
@@ -144,6 +145,7 @@ class SwitcherViewModel: ObservableObject {
         }
 
         errorMessage = nil
+        shellOutput = ""
         isRunning = true
 
         var stepList: [SwitcherStep] = [
@@ -151,7 +153,7 @@ class SwitcherViewModel: ObservableObject {
             SwitcherStep(id: .initFFI, title: mode == .local ? "Init local FFI" : "Skip FFI init"),
             SwitcherStep(id: .clearSPMCaches, title: "Clear SPM caches"),
             SwitcherStep(id: .clearDerivedData, title: "Clear Derived Data"),
-//            SwitcherStep(id: .resolvePackages, title: "Resolve packages"),
+            SwitcherStep(id: .resolvePackages, title: "Resolve packages"),
         ]
         steps = stepList
 
@@ -396,9 +398,14 @@ class SwitcherViewModel: ObservableObject {
         }
     }
 
+    @MainActor
+    private func appendShellOutput(_ text: String) {
+        shellOutput += text
+    }
+
     private func runShell(_ executable: String, args: [String], workingDir: String) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            DispatchQueue.global().async { [weak self] in
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = args
@@ -410,25 +417,38 @@ class SwitcherViewModel: ObservableObject {
                 }
                 process.environment = env
 
+                let stdoutPipe = Pipe()
                 let stderrPipe = Pipe()
+                process.standardOutput = stdoutPipe
                 process.standardError = stderrPipe
+
+                let handleOutput = { (pipe: Pipe) in
+                    pipe.fileHandleForReading.readabilityHandler = { handle in
+                        let data = handle.availableData
+                        guard !data.isEmpty, let line = String(data: data, encoding: .utf8) else { return }
+                        Task { @MainActor in
+                            self?.appendShellOutput(line)
+                        }
+                    }
+                }
+                handleOutput(stdoutPipe)
+                handleOutput(stderrPipe)
 
                 do {
                     try process.run()
                     process.waitUntilExit()
+
+                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                    stderrPipe.fileHandleForReading.readabilityHandler = nil
+
                     if process.terminationStatus == 0 {
                         continuation.resume()
                     } else {
-                        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                        let stderrText = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                         let name = URL(fileURLWithPath: executable).lastPathComponent
-                        let msg = stderrText.isEmpty
-                            ? "\(name) exited with code \(process.terminationStatus)"
-                            : "\(name) exited with code \(process.terminationStatus):\n\(stderrText)"
                         continuation.resume(throwing: NSError(
                             domain: "SDKSwitcher",
                             code: Int(process.terminationStatus),
-                            userInfo: [NSLocalizedDescriptionKey: msg]
+                            userInfo: [NSLocalizedDescriptionKey: "\(name) exited with code \(process.terminationStatus)"]
                         ))
                     }
                 } catch {

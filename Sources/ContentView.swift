@@ -117,6 +117,36 @@ struct ContentView: View {
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            // Shell output
+            if !vm.shellOutput.isEmpty {
+                Divider()
+                    .padding(.horizontal, 24)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Output")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            Text(vm.shellOutput)
+                                .font(.system(size: 10, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .id("shellOutputEnd")
+                        }
+                        .frame(height: 200)
+                        .onChange(of: vm.shellOutput) { _ in
+                            proxy.scrollTo("shellOutputEnd", anchor: .bottom)
+                        }
+                    }
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            }
         }
         .frame(width: 480)
         .background(.background)
