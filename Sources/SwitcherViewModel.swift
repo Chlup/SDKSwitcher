@@ -341,13 +341,25 @@ class SwitcherViewModel: ObservableObject {
     private func clearSPMCaches() throws {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
-        let paths = [
+        let cacheDirs = [
             "\(home)/Library/Caches/org.swift.swiftpm",
             "\(home)/Library/org.swift.swiftpm"
         ]
-        for path in paths {
-            if fm.fileExists(atPath: path) {
-                try fm.removeItem(atPath: path)
+
+        for cacheDir in cacheDirs {
+            // Remove repositories/zcash-swift-wallet-sdk-* directories
+            let reposDir = "\(cacheDir)/repositories"
+            if fm.fileExists(atPath: reposDir),
+               let items = try? fm.contentsOfDirectory(atPath: reposDir) {
+                for item in items where item.hasPrefix("zcash-swift-wallet-sdk") {
+                    try fm.removeItem(atPath: "\(reposDir)/\(item)")
+                }
+            }
+
+            // Remove manifests/ManifestLoading/zcash-swift-wallet-sdk.dia
+            let manifestFile = "\(cacheDir)/manifests/ManifestLoading/zcash-swift-wallet-sdk.dia"
+            if fm.fileExists(atPath: manifestFile) {
+                try fm.removeItem(atPath: manifestFile)
             }
         }
     }
