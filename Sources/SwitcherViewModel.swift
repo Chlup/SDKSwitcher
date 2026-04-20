@@ -46,24 +46,34 @@ struct SDKLocalState {
 }
 
 /// Reactive file watcher wrapping DispatchSource.makeFileSystemObjectSource.
-/// Invokes `onChange` (on main queue) when the watched file is written to.
+/// Invokes `onChange` (on the main actor) when the watched file is written to.
 /// Handles the common case where the file is atomically replaced (delete+rename)
 /// by cancelling the current source and re-opening after a brief delay.
+///
+/// Resource cleanup requires an explicit `tearDown()` call before the instance
+/// is released. Swift 6's `deinit` is always nonisolated, so it cannot touch
+/// the main-actor-isolated stored state safely; the owning view model calls
+/// `tearDown()` during watcher replacement.
+@MainActor
 final class FileWatcher {
     private let path: String
-    private let onChange: () -> Void
+    private let onChange: @MainActor () -> Void
     private var source: DispatchSourceFileSystemObject?
     private var fileDescriptor: Int32 = -1
-    private var retryWorkItem: DispatchWorkItem?
+    private var retryTask: Task<Void, Never>?
 
-    init(path: String, onChange: @escaping () -> Void) {
+    init(path: String, onChange: @escaping @MainActor () -> Void) {
         self.path = path
         self.onChange = onChange
         start()
     }
 
-    deinit {
-        stop()
+    func tearDown() {
+        retryTask?.cancel()
+        retryTask = nil
+        source?.cancel()
+        source = nil
+        fileDescriptor = -1
     }
 
     private func start() {
@@ -80,16 +90,13 @@ final class FileWatcher {
         )
         self.source = source
 
+        // DispatchSource event handlers aren't inferred as `@MainActor`
+        // even with `queue: .main`, so we hop explicitly via Task.
         source.setEventHandler { [weak self] in
-            guard let self, let source = self.source else { return }
-            let event = source.data
-
-            if event.contains(.delete) || event.contains(.rename) {
-                self.stop()
-                self.onChange()
-                self.scheduleRetry()
-            } else {
-                self.onChange()
+            guard let source = self?.source else { return }
+            let events = source.data
+            Task { @MainActor [weak self] in
+                self?.handleEvents(events)
             }
         }
 
@@ -100,19 +107,23 @@ final class FileWatcher {
         source.resume()
     }
 
-    private func stop() {
-        retryWorkItem?.cancel()
-        retryWorkItem = nil
-        source?.cancel()
-        source = nil
-        fileDescriptor = -1
+    private func handleEvents(_ events: DispatchSource.FileSystemEvent) {
+        if events.contains(.delete) || events.contains(.rename) {
+            tearDown()
+            onChange()
+            scheduleRetry()
+        } else {
+            onChange()
+        }
     }
 
     private func scheduleRetry() {
-        retryWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.start() }
-        retryWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
+        retryTask?.cancel()
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.start()
+        }
     }
 }
 
@@ -145,6 +156,7 @@ struct SwitcherConfig: Codable {
     }
 }
 
+@MainActor
 class SwitcherViewModel: ObservableObject {
     @Published var steps: [SwitcherStep] = []
     @Published var isRunning = false
@@ -237,7 +249,9 @@ class SwitcherViewModel: ObservableObject {
     // MARK: - Reactive observation
 
     private func setupWatchers() {
+        refFileWatcher?.tearDown()
         refFileWatcher = nil
+        gitHeadWatcher?.tearDown()
         gitHeadWatcher = nil
 
         if let projectDirPath {
