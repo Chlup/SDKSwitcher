@@ -26,6 +26,10 @@ struct ContentView: View {
     private var targetLabel: String { vm.currentMode == .local ? "Switch to Remote" : "Switch to Local" }
     private var targetColor: Color { vm.currentMode == .local ? .blue : .orange }
 
+    private var isSyncDisabled: Bool {
+        vm.isRunning || !vm.isConfigured || vm.currentMode != .local
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -85,6 +89,24 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .disabled(vm.isRunning || !vm.isConfigured || vm.currentMode == .unknown)
             .padding(.horizontal, 24)
+            .padding(.bottom, 8)
+
+            // Sync SDK button
+            Button {
+                vm.syncSDK()
+            } label: {
+                Text("Sync SDK")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(isSyncDisabled ? Color.secondary : Color.purple)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .disabled(isSyncDisabled)
+            .padding(.horizontal, 24)
             .padding(.bottom, vm.isRunning ? 8 : 24)
 
             // Cancel button
@@ -136,6 +158,7 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -157,6 +180,7 @@ struct ContentView: View {
                             Text(output)
                                 .font(.system(size: 10, design: .monospaced))
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
                                 .id("shellOutputEnd")
                         }
                         .frame(height: 200)
