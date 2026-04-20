@@ -866,6 +866,80 @@ class SwitcherViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Clean
+
+    @MainActor
+    func cleanDerivedData(includingSPMCache: Bool) {
+        guard !isRunning else { return }
+        guard let projectDirPath else {
+            errorMessage = "Project path must be configured first."
+            return
+        }
+
+        errorMessage = nil
+        stepOutputs = [:]
+        selectedStep = nil
+        isCancelled = false
+        isRunning = true
+
+        var stepList: [SwitcherStep] = []
+        if includingSPMCache {
+            stepList.append(SwitcherStep(id: .clearSPMCaches, title: "Clear SPM caches"))
+        }
+        stepList.append(SwitcherStep(id: .clearDerivedData, title: "Clear Derived Data"))
+        steps = stepList
+
+        Task { @MainActor in
+            defer {
+                refreshDetectedState()
+                runningProcess = nil
+                isRunning = false
+            }
+
+            do {
+                for i in stepList.indices {
+                    guard !isCancelled else { break }
+
+                    stepList[i].state = .running
+                    currentStepID = stepList[i].id
+                    selectedStep = stepList[i].id
+                    steps = stepList
+
+                    switch stepList[i].id {
+                    case .clearSPMCaches:
+                        try clearSPMCaches()
+                        stepList[i].state = .done
+
+                    case .clearDerivedData:
+                        try clearDerivedData()
+                        stepList[i].state = .done
+
+                    default:
+                        stepList[i].state = .skipped
+                    }
+
+                    steps = stepList
+                }
+            } catch {
+                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
+                    stepList[idx].state = .failed
+                    steps = stepList
+                }
+                if !isCancelled {
+                    errorMessage = error.localizedDescription
+                }
+            }
+
+            if isCancelled {
+                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
+                    stepList[idx].state = .failed
+                    steps = stepList
+                }
+                errorMessage = "Cancelled"
+            }
+        }
+    }
+
     // MARK: - Sync helpers
 
     private func syncError(_ message: String) -> NSError {

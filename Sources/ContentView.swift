@@ -30,6 +30,10 @@ struct ContentView: View {
         vm.isRunning || !vm.isConfigured || vm.currentMode != .local
     }
 
+    private var isCleanDisabled: Bool {
+        vm.isRunning || !vm.isConfigured
+    }
+
     private var hasRightColumnContent: Bool {
         !vm.steps.isEmpty || vm.errorMessage != nil || vm.selectedStepOutput != nil
     }
@@ -165,6 +169,46 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .disabled(isSyncDisabled)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 12)
+
+            Divider()
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+
+            // Clean Derived Data button
+            Button {
+                vm.cleanDerivedData(includingSPMCache: false)
+            } label: {
+                Text("Clean Derived Data")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(isCleanDisabled ? Color.secondary : Color.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .disabled(isCleanDisabled)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 8)
+
+            // Clean Derived Data and SPM cache button
+            Button {
+                vm.cleanDerivedData(includingSPMCache: true)
+            } label: {
+                Text("Clean Derived Data and SPM cache")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(isCleanDisabled ? Color.secondary : Color.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .disabled(isCleanDisabled)
             .padding(.horizontal, 24)
             .padding(.bottom, vm.isRunning ? 8 : 24)
 
