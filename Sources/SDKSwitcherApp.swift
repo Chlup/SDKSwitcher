@@ -16,6 +16,10 @@ struct SDKSwitcherApp: App {
     var body: some Scene {
         Window("SDK Switcher", id: "main") {
             ContentView(vm: appDelegate.viewModel)
+                .onAppear {
+                    // Hide from dock
+                    NSApp.setActivationPolicy(.accessory)
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
@@ -31,18 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hide from dock — do this before any window appears so the activation
-        // policy is stable by the time the main window is created.
-        NSApp.setActivationPolicy(.accessory)
-
         setupStatusBar()
-
-        // Bring the main window to front on launch. The Window scene creates
-        // the window shortly after launch; by the time this async block runs
-        // the window should exist.
-        DispatchQueue.main.async { [weak self] in
-            self?.showWindow()
-        }
 
         // Update menu when status changes
         viewModel.objectWillChange
