@@ -16,66 +16,26 @@ extension SwitcherViewModel {
             return
         }
 
-        errorMessage = nil
-        stepOutputs = [:]
-        selectedStep = nil
-        isCancelled = false
-        isRunning = true
-
         var stepList: [SwitcherStep] = []
         if includingSPMCache {
             stepList.append(SwitcherStep(id: .clearSPMCaches, title: "Clear SPM caches"))
         }
         stepList.append(SwitcherStep(id: .clearDerivedData, title: "Clear Derived Data"))
-        steps = stepList
 
         Task { @MainActor in
-            defer {
-                refreshDetectedState()
-                runningProcess = nil
-                isRunning = false
-            }
+            await runPipeline(stepList) { stepID in
+                switch stepID {
+                case .clearSPMCaches:
+                    try await clearSPMCaches()
+                    return .done
 
-            do {
-                for i in stepList.indices {
-                    guard !isCancelled else { break }
+                case .clearDerivedData:
+                    try await clearDerivedData()
+                    return .done
 
-                    stepList[i].state = .running
-                    currentStepID = stepList[i].id
-                    selectedStep = stepList[i].id
-                    steps = stepList
-
-                    switch stepList[i].id {
-                    case .clearSPMCaches:
-                        try await clearSPMCaches()
-                        stepList[i].state = .done
-
-                    case .clearDerivedData:
-                        try await clearDerivedData()
-                        stepList[i].state = .done
-
-                    default:
-                        stepList[i].state = .skipped
-                    }
-
-                    steps = stepList
+                default:
+                    return .skipped
                 }
-            } catch {
-                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
-                    stepList[idx].state = .failed
-                    steps = stepList
-                }
-                if !isCancelled {
-                    errorMessage = error.localizedDescription
-                }
-            }
-
-            if isCancelled {
-                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
-                    stepList[idx].state = .failed
-                    steps = stepList
-                }
-                errorMessage = "Cancelled"
             }
         }
     }

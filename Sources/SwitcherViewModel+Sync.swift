@@ -16,13 +16,7 @@ extension SwitcherViewModel {
             return
         }
 
-        errorMessage = nil
-        stepOutputs = [:]
-        selectedStep = nil
-        isCancelled = false
-        isRunning = true
-
-        var stepList: [SwitcherStep] = [
+        let stepList: [SwitcherStep] = [
             SwitcherStep(id: .readRef, title: "Read .zodl-sdk-ref.json"),
             SwitcherStep(id: .verifySDK, title: "Verify SDK directory"),
             SwitcherStep(id: .shortCircuit, title: "Check if already in sync"),
@@ -34,126 +28,68 @@ extension SwitcherViewModel {
             SwitcherStep(id: .clearDerivedData, title: "Clear Derived Data"),
             SwitcherStep(id: .resolvePackages, title: "Resolve packages"),
         ]
-        steps = stepList
 
         Task { @MainActor in
-            defer {
-                refreshDetectedState()
-                runningProcess = nil
-                isRunning = false
-            }
+            var ref: SDKRef?
+            var remoteName: String?
 
-            func markRemainingSkipped(from index: Int) {
-                for j in stepList.indices where j > index {
-                    stepList[j].state = .skipped
-                }
-            }
-
-            do {
-                var ref: SDKRef?
-                var remoteName: String?
-
-                for i in stepList.indices {
-                    guard !isCancelled else { break }
-
-                    stepList[i].state = .running
-                    currentStepID = stepList[i].id
-                    selectedStep = stepList[i].id
-                    steps = stepList
-
-                    switch stepList[i].id {
-                    case .readRef:
-                        guard let loaded = try readSDKRef(projectDirPath: projectDirPath) else {
-                            appendShellOutput("No local SDK ref recorded; nothing to sync.\n")
-                            stepList[i].state = .done
-                            markRemainingSkipped(from: i)
-                            steps = stepList
-                            return
-                        }
-                        ref = loaded
-                        appendShellOutput("repoURL: \(loaded.repoURL)\nbranch:  \(loaded.branch)\n")
-                        stepList[i].state = .done
-
-                    case .verifySDK:
-                        try verifySDKDirectory(sdkPath: sdkPath)
-                        stepList[i].state = .done
-
-                    case .shortCircuit:
-                        guard let ref else { throw syncError("Internal: ref missing at short-circuit step.") }
-                        if try isAlreadyInSync(sdkPath: sdkPath, ref: ref) {
-                            appendShellOutput("Already in sync.\n")
-                            stepList[i].state = .done
-                            markRemainingSkipped(from: i)
-                            steps = stepList
-                            return
-                        }
-                        stepList[i].state = .done
-
-                    case .ensureRemote:
-                        guard let ref else { throw syncError("Internal: ref missing at ensure-remote step.") }
-                        let name = try ensureRemoteRegistered(sdkPath: sdkPath, repoURL: ref.repoURL)
-                        remoteName = name
-                        appendShellOutput("Using remote `\(name)` for \(ref.repoURL)\n")
-                        stepList[i].state = .done
-
-                    case .fetchRemote:
-                        guard let remoteName else { throw syncError("Internal: remote name missing at fetch step.") }
-                        try await runShell("/usr/bin/git", args: ["fetch", remoteName], workingDir: sdkPath)
-                        stepList[i].state = .done
-
-                    case .checkoutBranch:
-                        guard let ref, let remoteName else {
-                            throw syncError("Internal: ref or remote name missing at checkout step.")
-                        }
-                        try await alignBranch(sdkPath: sdkPath, remoteName: remoteName, branch: ref.branch)
-                        stepList[i].state = .done
-
-                    case .initFFI:
-                        try await runShell(
-                            "\(sdkPath)/Scripts/init-local-ffi.sh",
-                            args: ["--cached"],
-                            workingDir: sdkPath
-                        )
-                        stepList[i].state = .done
-
-                    case .clearSPMCaches:
-                        try await clearSPMCaches()
-                        stepList[i].state = .done
-
-                    case .clearDerivedData:
-                        try await clearDerivedData()
-                        stepList[i].state = .done
-
-                    case .resolvePackages:
-                        try await runShell(
-                            "/usr/bin/xcodebuild",
-                            args: ["-resolvePackageDependencies", "-project", "\(projectDirPath)/secant.xcodeproj"],
-                            workingDir: projectDirPath
-                        )
-                        stepList[i].state = .done
-
-                    case .updatePbxproj:
-                        stepList[i].state = .skipped
+            await runPipeline(stepList) { stepID in
+                switch stepID {
+                case .readRef:
+                    guard let loaded = try performReadRef(projectDirPath: projectDirPath) else {
+                        appendShellOutput("No local SDK ref recorded; nothing to sync.\n")
+                        return .halt
                     }
+                    ref = loaded
+                    return .done
 
-                    steps = stepList
-                }
-            } catch {
-                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
-                    stepList[idx].state = .failed
-                    steps = stepList
-                }
-                if !isCancelled {
-                    errorMessage = error.localizedDescription
-                }
-            }
+                case .verifySDK:
+                    try verifySDKDirectory(sdkPath: sdkPath)
+                    return .done
 
-            if isCancelled {
-                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
-                    stepList[idx].state = .failed
-                    steps = stepList
+                case .shortCircuit:
+                    guard let ref else { throw syncError("Internal: ref missing at short-circuit step.") }
+                    if try performShortCircuit(sdkPath: sdkPath, ref: ref) {
+                        return .halt
+                    }
+                    return .done
+
+                case .ensureRemote:
+                    guard let ref else { throw syncError("Internal: ref missing at ensure-remote step.") }
+                    remoteName = try performEnsureRemote(sdkPath: sdkPath, ref: ref)
+                    return .done
+
+                case .fetchRemote:
+                    guard let remoteName else { throw syncError("Internal: remote name missing at fetch step.") }
+                    try await performFetchRemote(sdkPath: sdkPath, remoteName: remoteName)
+                    return .done
+
+                case .checkoutBranch:
+                    guard let ref, let remoteName else {
+                        throw syncError("Internal: ref or remote name missing at checkout step.")
+                    }
+                    try await performCheckoutBranch(sdkPath: sdkPath, remoteName: remoteName, branch: ref.branch)
+                    return .done
+
+                case .initFFI:
+                    try await performInitFFI(sdkPath: sdkPath)
+                    return .done
+
+                case .clearSPMCaches:
+                    try await clearSPMCaches()
+                    return .done
+
+                case .clearDerivedData:
+                    try await clearDerivedData()
+                    return .done
+
+                case .resolvePackages:
+                    try await performResolvePackages(projectDirPath: projectDirPath)
+                    return .done
+
+                case .updatePbxproj:
+                    return .skipped
                 }
-                errorMessage = "Cancelled"
             }
         }
     }

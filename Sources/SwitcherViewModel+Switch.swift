@@ -17,13 +17,7 @@ extension SwitcherViewModel {
             return
         }
 
-        errorMessage = nil
-        stepOutputs = [:]
-        selectedStep = nil
-        isCancelled = false
-        isRunning = true
-
-        var stepList: [SwitcherStep]
+        let stepList: [SwitcherStep]
         if mode == .local {
             stepList = [
                 SwitcherStep(id: .readRef, title: "Read .zodl-sdk-ref.json"),
@@ -47,140 +41,78 @@ extension SwitcherViewModel {
                 SwitcherStep(id: .resolvePackages, title: "Resolve packages"),
             ]
         }
-        steps = stepList
 
         Task { @MainActor in
-            do {
-                var ref: SDKRef?
-                var remoteName: String?
-                var skipRemainingGitSync = false
+            var ref: SDKRef?
+            var remoteName: String?
+            var skipRemainingGitSync = false
 
-                for i in stepList.indices {
-                    guard !isCancelled else { break }
-
-                    stepList[i].state = .running
-                    currentStepID = stepList[i].id
-                    selectedStep = stepList[i].id
-                    steps = stepList
-
-                    switch stepList[i].id {
-                    case .readRef:
-                        if let loaded = try readSDKRef(projectDirPath: projectDirPath) {
-                            ref = loaded
-                            appendShellOutput("repoURL: \(loaded.repoURL)\nbranch:  \(loaded.branch)\n")
-                        } else {
-                            appendShellOutput("No local SDK ref recorded; skipping git sync steps.\n")
-                            skipRemainingGitSync = true
-                        }
-                        stepList[i].state = .done
-
-                    case .verifySDK:
-                        if skipRemainingGitSync {
-                            stepList[i].state = .skipped
-                        } else {
-                            try verifySDKDirectory(sdkPath: sdkPath)
-                            stepList[i].state = .done
-                        }
-
-                    case .shortCircuit:
-                        if skipRemainingGitSync {
-                            stepList[i].state = .skipped
-                        } else {
-                            guard let ref else { throw syncError("Internal: ref missing at short-circuit step.") }
-                            if try isAlreadyInSync(sdkPath: sdkPath, ref: ref) {
-                                appendShellOutput("Already in sync.\n")
-                                skipRemainingGitSync = true
-                            }
-                            stepList[i].state = .done
-                        }
-
-                    case .ensureRemote:
-                        if skipRemainingGitSync {
-                            stepList[i].state = .skipped
-                        } else {
-                            guard let ref else { throw syncError("Internal: ref missing at ensure-remote step.") }
-                            let name = try ensureRemoteRegistered(sdkPath: sdkPath, repoURL: ref.repoURL)
-                            remoteName = name
-                            appendShellOutput("Using remote `\(name)` for \(ref.repoURL)\n")
-                            stepList[i].state = .done
-                        }
-
-                    case .fetchRemote:
-                        if skipRemainingGitSync {
-                            stepList[i].state = .skipped
-                        } else {
-                            guard let remoteName else { throw syncError("Internal: remote name missing at fetch step.") }
-                            try await runShell("/usr/bin/git", args: ["fetch", remoteName], workingDir: sdkPath)
-                            stepList[i].state = .done
-                        }
-
-                    case .checkoutBranch:
-                        if skipRemainingGitSync {
-                            stepList[i].state = .skipped
-                        } else {
-                            guard let ref, let remoteName else {
-                                throw syncError("Internal: ref or remote name missing at checkout step.")
-                            }
-                            try await alignBranch(sdkPath: sdkPath, remoteName: remoteName, branch: ref.branch)
-                            stepList[i].state = .done
-                        }
-
-                    case .updatePbxproj:
-                        try updatePbxproj(to: mode, pbxprojPath: pbxprojPath, sdkPath: sdkPath)
-                        stepList[i].state = .done
-
-                    case .initFFI:
-                        if mode == .local {
-                            try await runShell(
-                                "\(sdkPath)/Scripts/init-local-ffi.sh",
-                                args: ["--cached"],
-                                workingDir: sdkPath
-                            )
-                            stepList[i].state = .done
-                        } else {
-                            stepList[i].state = .skipped
-                        }
-
-                    case .clearSPMCaches:
-                        try await clearSPMCaches()
-                        stepList[i].state = .done
-
-                    case .clearDerivedData:
-                        try await clearDerivedData()
-                        stepList[i].state = .done
-
-                    case .resolvePackages:
-                        try await runShell(
-                            "/usr/bin/xcodebuild",
-                            args: ["-resolvePackageDependencies", "-project", "\(projectDirPath)/secant.xcodeproj"],
-                            workingDir: projectDirPath
-                        )
-                        stepList[i].state = .done
+            await runPipeline(stepList) { stepID in
+                switch stepID {
+                case .readRef:
+                    if let loaded = try performReadRef(projectDirPath: projectDirPath) {
+                        ref = loaded
+                    } else {
+                        appendShellOutput("No local SDK ref recorded; skipping git sync steps.\n")
+                        skipRemainingGitSync = true
                     }
+                    return .done
 
-                    steps = stepList
-                }
-            } catch {
-                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
-                    stepList[idx].state = .failed
-                    steps = stepList
-                }
-                if !isCancelled {
-                    errorMessage = error.localizedDescription
+                case .verifySDK:
+                    if skipRemainingGitSync { return .skipped }
+                    try verifySDKDirectory(sdkPath: sdkPath)
+                    return .done
+
+                case .shortCircuit:
+                    if skipRemainingGitSync { return .skipped }
+                    guard let ref else { throw syncError("Internal: ref missing at short-circuit step.") }
+                    if try performShortCircuit(sdkPath: sdkPath, ref: ref) {
+                        skipRemainingGitSync = true
+                    }
+                    return .done
+
+                case .ensureRemote:
+                    if skipRemainingGitSync { return .skipped }
+                    guard let ref else { throw syncError("Internal: ref missing at ensure-remote step.") }
+                    remoteName = try performEnsureRemote(sdkPath: sdkPath, ref: ref)
+                    return .done
+
+                case .fetchRemote:
+                    if skipRemainingGitSync { return .skipped }
+                    guard let remoteName else { throw syncError("Internal: remote name missing at fetch step.") }
+                    try await performFetchRemote(sdkPath: sdkPath, remoteName: remoteName)
+                    return .done
+
+                case .checkoutBranch:
+                    if skipRemainingGitSync { return .skipped }
+                    guard let ref, let remoteName else {
+                        throw syncError("Internal: ref or remote name missing at checkout step.")
+                    }
+                    try await performCheckoutBranch(sdkPath: sdkPath, remoteName: remoteName, branch: ref.branch)
+                    return .done
+
+                case .updatePbxproj:
+                    try updatePbxproj(to: mode, pbxprojPath: pbxprojPath, sdkPath: sdkPath)
+                    return .done
+
+                case .initFFI:
+                    guard mode == .local else { return .skipped }
+                    try await performInitFFI(sdkPath: sdkPath)
+                    return .done
+
+                case .clearSPMCaches:
+                    try await clearSPMCaches()
+                    return .done
+
+                case .clearDerivedData:
+                    try await clearDerivedData()
+                    return .done
+
+                case .resolvePackages:
+                    try await performResolvePackages(projectDirPath: projectDirPath)
+                    return .done
                 }
             }
-
-            if isCancelled {
-                if let idx = stepList.firstIndex(where: { $0.state == .running }) {
-                    stepList[idx].state = .failed
-                    steps = stepList
-                }
-                errorMessage = "Cancelled"
-            }
-
-            refreshDetectedState()
-            runningProcess = nil
-            isRunning = false
         }
     }
 

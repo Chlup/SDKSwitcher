@@ -17,6 +17,16 @@ enum StepState {
     case pending, running, done, skipped, failed
 }
 
+/// Result of executing a single pipeline step's handler.
+/// - `done`: step ran successfully; continue with the next step.
+/// - `skipped`: step did not run (precondition not met); continue with the next step.
+/// - `halt`: step ran successfully; mark all remaining steps as skipped and exit.
+enum StepOutcome {
+    case done
+    case skipped
+    case halt
+}
+
 enum StepID: String {
     case updatePbxproj
     case readRef
