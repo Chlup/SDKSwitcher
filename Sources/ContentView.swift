@@ -312,6 +312,14 @@ struct WindowAccessor: NSViewRepresentable {
             sender.orderOut(nil)
             return false
         }
+
+        // Accessory apps don't automatically become the active application when
+        // their windows become key (e.g. via Exposé or a click). Without this,
+        // the previously-active regular app reclaims focus and our window
+        // drops behind. Re-activate explicitly.
+        func windowDidBecomeKey(_ notification: Notification) {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     private static let delegate = Delegate()
@@ -320,7 +328,7 @@ struct WindowAccessor: NSViewRepresentable {
         let view = NSView()
         DispatchQueue.main.async {
             if let window = view.window {
-                window.delegate = WindowAccessor.delegate
+                configure(window)
             }
         }
         return view
@@ -328,8 +336,17 @@ struct WindowAccessor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         if let window = nsView.window, !(window.delegate is Delegate) {
-            window.delegate = WindowAccessor.delegate
+            configure(window)
         }
+    }
+
+    private func configure(_ window: NSWindow) {
+        window.delegate = WindowAccessor.delegate
+        // Accessory apps' windows are otherwise auto-hidden when the app
+        // deactivates, so Mission Control / App Exposé can't find them.
+        window.hidesOnDeactivate = false
+        window.collectionBehavior.insert(.managed)
+        window.collectionBehavior.insert(.participatesInCycle)
     }
 }
 
