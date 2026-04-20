@@ -45,6 +45,77 @@ struct SDKLocalState {
     let errorDescription: String?
 }
 
+/// Reactive file watcher wrapping DispatchSource.makeFileSystemObjectSource.
+/// Invokes `onChange` (on main queue) when the watched file is written to.
+/// Handles the common case where the file is atomically replaced (delete+rename)
+/// by cancelling the current source and re-opening after a brief delay.
+final class FileWatcher {
+    private let path: String
+    private let onChange: () -> Void
+    private var source: DispatchSourceFileSystemObject?
+    private var fileDescriptor: Int32 = -1
+    private var retryWorkItem: DispatchWorkItem?
+
+    init(path: String, onChange: @escaping () -> Void) {
+        self.path = path
+        self.onChange = onChange
+        start()
+    }
+
+    deinit {
+        stop()
+    }
+
+    private func start() {
+        fileDescriptor = open(path, O_EVTONLY)
+        guard fileDescriptor != -1 else {
+            scheduleRetry()
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fileDescriptor,
+            eventMask: [.write, .extend, .delete, .rename],
+            queue: .main
+        )
+        self.source = source
+
+        source.setEventHandler { [weak self] in
+            guard let self, let source = self.source else { return }
+            let event = source.data
+
+            if event.contains(.delete) || event.contains(.rename) {
+                self.stop()
+                self.onChange()
+                self.scheduleRetry()
+            } else {
+                self.onChange()
+            }
+        }
+
+        source.setCancelHandler { [fd = fileDescriptor] in
+            if fd != -1 { close(fd) }
+        }
+
+        source.resume()
+    }
+
+    private func stop() {
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
+        source?.cancel()
+        source = nil
+        fileDescriptor = -1
+    }
+
+    private func scheduleRetry() {
+        retryWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.start() }
+        retryWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+}
+
 struct SwitcherStep: Identifiable {
     let id: StepID
     let title: String
@@ -92,6 +163,14 @@ class SwitcherViewModel: ObservableObject {
     private let remoteURL = "https://github.com/zcash/zcash-swift-wallet-sdk"
     private let sdkName = "zcash-swift-wallet-sdk"
 
+    // Reactive observation — file watchers + periodic timer both feed
+    // refreshDetectedState() through a 500 ms debounce.
+    private var refFileWatcher: FileWatcher?
+    private var gitHeadWatcher: FileWatcher?
+    private var refreshTimer: Timer?
+    private var debounceWorkItem: DispatchWorkItem?
+    private let pollInterval: TimeInterval = 300  // 5 minutes
+
     private var pbxprojPath: String? {
         guard let projectDirPath else { return nil }
         return "\(projectDirPath)/secant.xcodeproj/project.pbxproj"
@@ -130,25 +209,70 @@ class SwitcherViewModel: ObservableObject {
         self.projectDirPath = config.projectDirPath
         self.sdkPath = config.sdkPath
         refreshDetectedState()
+        setupWatchers()
+        startRefreshTimer()
     }
 
     func setProjectDirPath(_ path: String) {
         projectDirPath = path
         saveConfig()
         refreshDetectedState()
+        setupWatchers()
     }
 
     func setSDKPath(_ path: String) {
         sdkPath = path
         saveConfig()
         refreshDetectedState()
+        setupWatchers()
     }
 
     @MainActor
-    private func refreshDetectedState() {
+    func refreshDetectedState() {
         detectCurrentMode()
         detectCurrentSDKRef()
         detectCurrentSDKState()
+    }
+
+    // MARK: - Reactive observation
+
+    private func setupWatchers() {
+        refFileWatcher = nil
+        gitHeadWatcher = nil
+
+        if let projectDirPath {
+            refFileWatcher = FileWatcher(
+                path: "\(projectDirPath)/.zodl-sdk-ref.json",
+                onChange: { [weak self] in self?.scheduleDebouncedRefresh() }
+            )
+        }
+
+        if let sdkPath {
+            gitHeadWatcher = FileWatcher(
+                path: "\(sdkPath)/.git/HEAD",
+                onChange: { [weak self] in self?.scheduleDebouncedRefresh() }
+            )
+        }
+    }
+
+    private func startRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshDetectedState()
+            }
+        }
+    }
+
+    private func scheduleDebouncedRefresh() {
+        debounceWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.refreshDetectedState()
+            }
+        }
+        debounceWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
     }
 
     private func saveConfig() {

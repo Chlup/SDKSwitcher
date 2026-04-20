@@ -387,6 +387,16 @@ struct WindowAccessor: NSViewRepresentable {
             sender.orderOut(nil)
             return false
         }
+
+        // Refresh detected state whenever the window becomes key so the UI
+        // always reflects current values when the user looks at it.
+        func windowDidBecomeKey(_ notification: Notification) {
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                Task { @MainActor in
+                    appDelegate.viewModel.refreshDetectedState()
+                }
+            }
+        }
     }
 
     private static let delegate = Delegate()

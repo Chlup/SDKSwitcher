@@ -29,7 +29,7 @@ struct SDKSwitcherApp: App {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let viewModel = SwitcherViewModel()
     private var statusItem: NSStatusItem!
     private var cancellables = Set<AnyCancellable>()
@@ -47,6 +47,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    // NSMenuDelegate — refresh detected state when the user opens the
+    // status-bar menu so it always shows current values.
+    func menuWillOpen(_ menu: NSMenu) {
+        Task { @MainActor in
+            viewModel.refreshDetectedState()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -131,6 +139,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         quitItem.target = self
         menu.addItem(quitItem)
 
+        menu.delegate = self
         statusItem.menu = menu
     }
 
