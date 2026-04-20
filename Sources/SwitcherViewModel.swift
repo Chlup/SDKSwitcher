@@ -38,6 +38,13 @@ struct SDKRef {
     let branch: String
 }
 
+struct SDKLocalState {
+    let branch: String?         // nil if detached HEAD
+    let remoteURL: String?      // "origin" if present, else first remote
+    let isClean: Bool
+    let errorDescription: String?
+}
+
 struct SwitcherStep: Identifiable {
     let id: StepID
     let title: String
@@ -77,6 +84,8 @@ class SwitcherViewModel: ObservableObject {
     @Published var stepOutputs: [StepID: String] = [:]
     @Published var selectedStep: StepID?
     @Published var isCancelled = false
+    @Published var currentSDKRef: SDKRef?
+    @Published var currentSDKState: SDKLocalState?
 
     private var runningProcess: Process?
 
@@ -120,19 +129,26 @@ class SwitcherViewModel: ObservableObject {
         let config = SwitcherConfig.load()
         self.projectDirPath = config.projectDirPath
         self.sdkPath = config.sdkPath
-        detectCurrentMode()
+        refreshDetectedState()
     }
 
     func setProjectDirPath(_ path: String) {
         projectDirPath = path
         saveConfig()
-        detectCurrentMode()
+        refreshDetectedState()
     }
 
     func setSDKPath(_ path: String) {
         sdkPath = path
         saveConfig()
+        refreshDetectedState()
+    }
+
+    @MainActor
+    private func refreshDetectedState() {
         detectCurrentMode()
+        detectCurrentSDKRef()
+        detectCurrentSDKState()
     }
 
     private func saveConfig() {
@@ -172,6 +188,90 @@ class SwitcherViewModel: ObservableObject {
         } else {
             currentMode = .unknown
         }
+    }
+
+    @MainActor
+    func detectCurrentSDKRef() {
+        guard let projectDirPath else {
+            currentSDKRef = nil
+            return
+        }
+        currentSDKRef = (try? readSDKRef(projectDirPath: projectDirPath)) ?? nil
+    }
+
+    @MainActor
+    func detectCurrentSDKState() {
+        guard let sdkPath else {
+            currentSDKState = nil
+            return
+        }
+
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: sdkPath, isDirectory: &isDir), isDir.boolValue else {
+            currentSDKState = SDKLocalState(
+                branch: nil,
+                remoteURL: nil,
+                isClean: false,
+                errorDescription: "SDK path does not exist."
+            )
+            return
+        }
+
+        guard FileManager.default.fileExists(atPath: "\(sdkPath)/.git") else {
+            currentSDKState = SDKLocalState(
+                branch: nil,
+                remoteURL: nil,
+                isClean: false,
+                errorDescription: "Not a git repository."
+            )
+            return
+        }
+
+        let branchRaw = (try? gitCapture(["branch", "--show-current"], cwd: sdkPath)) ?? ""
+        let branch: String? = branchRaw.isEmpty ? nil : branchRaw
+        let statusOutput = (try? gitCapture(["status", "--porcelain"], cwd: sdkPath)) ?? ""
+        let remoteURL = branch.flatMap { remoteURLForCurrentBranch(sdkPath: sdkPath, branch: $0) }
+
+        currentSDKState = SDKLocalState(
+            branch: branch,
+            remoteURL: remoteURL,
+            isClean: statusOutput.isEmpty,
+            errorDescription: nil
+        )
+    }
+
+    /// Returns the URL of the remote that the current branch was checked out from,
+    /// using the same matching logic as `Scripts/update-sdk-ref.sh`:
+    ///   1. Primary (SHA match): first remote where `<remote>/<branch>` SHA equals HEAD SHA.
+    ///   2. Fallback (name match): exactly one remote has a ref with the current branch name.
+    ///   3. Neither: `nil`.
+    private func remoteURLForCurrentBranch(sdkPath: String, branch: String) -> String? {
+        guard let remotesOutput = try? gitCapture(["remote"], cwd: sdkPath) else {
+            return nil
+        }
+        let remotes = remotesOutput
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        if remotes.isEmpty { return nil }
+
+        if let headSHA = try? gitCapture(["rev-parse", "HEAD"], cwd: sdkPath) {
+            for remote in remotes {
+                if let remoteSHA = try? gitCapture(["rev-parse", "\(remote)/\(branch)"], cwd: sdkPath),
+                   remoteSHA == headSHA {
+                    return try? gitCapture(["remote", "get-url", remote], cwd: sdkPath)
+                }
+            }
+        }
+
+        let candidates = remotes.filter { remote in
+            (try? gitCapture(["rev-parse", "--verify", "--quiet", "refs/remotes/\(remote)/\(branch)"], cwd: sdkPath)) != nil
+        }
+        if candidates.count == 1 {
+            return try? gitCapture(["remote", "get-url", candidates[0]], cwd: sdkPath)
+        }
+
+        return nil
     }
 
     @MainActor
@@ -344,7 +444,7 @@ class SwitcherViewModel: ObservableObject {
                 errorMessage = "Cancelled"
             }
 
-            detectCurrentMode()
+            refreshDetectedState()
             runningProcess = nil
             isRunning = false
         }
@@ -508,7 +608,7 @@ class SwitcherViewModel: ObservableObject {
 
         Task { @MainActor in
             defer {
-                detectCurrentMode()
+                refreshDetectedState()
                 runningProcess = nil
                 isRunning = false
             }

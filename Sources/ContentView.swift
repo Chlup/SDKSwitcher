@@ -58,7 +58,48 @@ struct ContentView: View {
                 )
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 16)
+            .padding(.bottom, 12)
+
+            if vm.isConfigured {
+                Divider()
+                    .padding(.horizontal, 24)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        SectionHeader(title: ".zodl-sdk-ref.json")
+                        if let ref = vm.currentSDKRef {
+                            InfoRow(label: "Repo", value: ref.repoURL)
+                            InfoRow(label: "Branch", value: ref.branch)
+                        } else {
+                            Text("No local SDK ref recorded")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        SectionHeader(title: "Local SDK repo")
+                        if let state = vm.currentSDKState {
+                            if let err = state.errorDescription {
+                                Text(err)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            } else {
+                                InfoRow(label: "Repo", value: state.remoteURL ?? "(branch not on any remote)")
+                                InfoRow(label: "Branch", value: state.branch ?? "(detached HEAD)")
+                                InfoRow(label: "Clean", value: state.isClean ? "yes" : "uncommitted changes")
+                            }
+                        } else {
+                            Text("Not available")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
+            }
 
             // Current state
             VStack(spacing: 6) {
@@ -221,6 +262,40 @@ struct ContentView: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             vm.setSDKPath(url.path)
+        }
+    }
+}
+
+struct SectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+    }
+}
+
+struct InfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .fontWeight(.medium)
+                .frame(width: 60, alignment: .leading)
+
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
