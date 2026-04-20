@@ -117,11 +117,11 @@ extension SwitcherViewModel {
                         stepList[i].state = .done
 
                     case .clearSPMCaches:
-                        try clearSPMCaches()
+                        try await clearSPMCaches()
                         stepList[i].state = .done
 
                     case .clearDerivedData:
-                        try clearDerivedData()
+                        try await clearDerivedData()
                         stepList[i].state = .done
 
                     case .resolvePackages:

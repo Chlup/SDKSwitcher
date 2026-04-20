@@ -47,11 +47,11 @@ extension SwitcherViewModel {
 
                     switch stepList[i].id {
                     case .clearSPMCaches:
-                        try clearSPMCaches()
+                        try await clearSPMCaches()
                         stepList[i].state = .done
 
                     case .clearDerivedData:
-                        try clearDerivedData()
+                        try await clearDerivedData()
                         stepList[i].state = .done
 
                     default:
@@ -82,51 +82,55 @@ extension SwitcherViewModel {
 
     // MARK: - Cache clearing
 
-    func clearSPMCaches() throws {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser.path
-        let cacheDirs = [
-            "\(home)/Library/Caches/org.swift.swiftpm",
-            "\(home)/Library/org.swift.swiftpm"
-        ]
+    func clearSPMCaches() async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            let home = fm.homeDirectoryForCurrentUser.path
+            let cacheDirs = [
+                "\(home)/Library/Caches/org.swift.swiftpm",
+                "\(home)/Library/org.swift.swiftpm"
+            ]
 
-        for cacheDir in cacheDirs {
-            // Remove repositories/zcash-swift-wallet-sdk-* directories
-            let reposDir = "\(cacheDir)/repositories"
-            if fm.fileExists(atPath: reposDir),
-               let items = try? fm.contentsOfDirectory(atPath: reposDir) {
-                for item in items where item.hasPrefix("zcash-swift-wallet-sdk") {
-                    try fm.removeItem(atPath: "\(reposDir)/\(item)")
+            for cacheDir in cacheDirs {
+                // Remove repositories/zcash-swift-wallet-sdk-* directories
+                let reposDir = "\(cacheDir)/repositories"
+                if fm.fileExists(atPath: reposDir),
+                   let items = try? fm.contentsOfDirectory(atPath: reposDir) {
+                    for item in items where item.hasPrefix("zcash-swift-wallet-sdk") {
+                        try fm.removeItem(atPath: "\(reposDir)/\(item)")
+                    }
+                }
+
+                // Remove manifests/ManifestLoading/zcash-swift-wallet-sdk.dia
+                let manifestFile = "\(cacheDir)/manifests/ManifestLoading/zcash-swift-wallet-sdk.dia"
+                if fm.fileExists(atPath: manifestFile) {
+                    try fm.removeItem(atPath: manifestFile)
+                }
+
+                // Remove artifacts/*_zcash_zcash_swift_wallet_sdk_*
+                let artifactsDir = "\(cacheDir)/artifacts"
+                if fm.fileExists(atPath: artifactsDir),
+                   let items = try? fm.contentsOfDirectory(atPath: artifactsDir) {
+                    for item in items where item.contains("_zcash_zcash_swift_wallet_sdk_") {
+                        try fm.removeItem(atPath: "\(artifactsDir)/\(item)")
+                    }
                 }
             }
-
-            // Remove manifests/ManifestLoading/zcash-swift-wallet-sdk.dia
-            let manifestFile = "\(cacheDir)/manifests/ManifestLoading/zcash-swift-wallet-sdk.dia"
-            if fm.fileExists(atPath: manifestFile) {
-                try fm.removeItem(atPath: manifestFile)
-            }
-
-            // Remove artifacts/*_zcash_zcash_swift_wallet_sdk_*
-            let artifactsDir = "\(cacheDir)/artifacts"
-            if fm.fileExists(atPath: artifactsDir),
-               let items = try? fm.contentsOfDirectory(atPath: artifactsDir) {
-                for item in items where item.contains("_zcash_zcash_swift_wallet_sdk_") {
-                    try fm.removeItem(atPath: "\(artifactsDir)/\(item)")
-                }
-            }
-        }
+        }.value
     }
 
-    func clearDerivedData() throws {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser.path
-        let derivedDataDir = "\(home)/Library/Developer/Xcode/DerivedData"
+    func clearDerivedData() async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            let home = fm.homeDirectoryForCurrentUser.path
+            let derivedDataDir = "\(home)/Library/Developer/Xcode/DerivedData"
 
-        if fm.fileExists(atPath: derivedDataDir),
-           let items = try? fm.contentsOfDirectory(atPath: derivedDataDir) {
-            for item in items where item.hasPrefix("secant-") {
-                try fm.removeItem(atPath: "\(derivedDataDir)/\(item)")
+            if fm.fileExists(atPath: derivedDataDir),
+               let items = try? fm.contentsOfDirectory(atPath: derivedDataDir) {
+                for item in items where item.hasPrefix("secant-") {
+                    try fm.removeItem(atPath: "\(derivedDataDir)/\(item)")
+                }
             }
-        }
+        }.value
     }
 }
