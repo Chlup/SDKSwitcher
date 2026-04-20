@@ -126,7 +126,7 @@ extension SwitcherViewModel {
     func performInitFFI(sdkPath: String) async throws {
         try await runShell(
             "\(sdkPath)/Scripts/init-local-ffi.sh",
-            args: ["--cached"],
+            args: [],
             workingDir: sdkPath
         )
     }
