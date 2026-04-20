@@ -30,7 +30,25 @@ struct ContentView: View {
         vm.isRunning || !vm.isConfigured || vm.currentMode != .local
     }
 
+    private var hasRightColumnContent: Bool {
+        !vm.steps.isEmpty || vm.errorMessage != nil || vm.selectedStepOutput != nil
+    }
+
     var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            leftColumn
+
+            if hasRightColumnContent {
+                Divider()
+                rightColumn
+            }
+        }
+        .background(.background)
+        .background(WindowAccessor())
+    }
+
+    @ViewBuilder
+    private var leftColumn: some View {
         VStack(spacing: 0) {
             // Header
             VStack(spacing: 4) {
@@ -168,12 +186,14 @@ struct ContentView: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
             }
+        }
+        .frame(width: 480)
+    }
 
-            // Steps
+    @ViewBuilder
+    private var rightColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
             if !vm.steps.isEmpty {
-                Divider()
-                    .padding(.horizontal, 24)
-
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(vm.steps) { step in
                         StepRow(step: step, isSelected: vm.selectedStep == step.id)
@@ -187,10 +207,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // Error
             if let error = vm.errorMessage {
-                Divider()
-                    .padding(.horizontal, 24)
+                if !vm.steps.isEmpty {
+                    Divider().padding(.horizontal, 24)
+                }
 
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "xmark.octagon.fill")
@@ -205,10 +225,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // Step output
             if let output = vm.selectedStepOutput {
-                Divider()
-                    .padding(.horizontal, 24)
+                if !vm.steps.isEmpty || vm.errorMessage != nil {
+                    Divider().padding(.horizontal, 24)
+                }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Output")
@@ -233,12 +253,11 @@ struct ContentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .padding(.horizontal, 24)
+                .padding(.top, vm.steps.isEmpty && vm.errorMessage == nil ? 24 : 12)
                 .padding(.bottom, 24)
             }
         }
-        .frame(width: 480)
-        .background(.background)
-        .background(WindowAccessor())
+        .frame(width: 460)
     }
 
     private func pickProjectDir() {
