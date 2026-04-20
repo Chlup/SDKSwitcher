@@ -108,6 +108,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switchItem.tag = targetMode == .local ? 0 : 1
         menu.addItem(switchItem)
 
+        // Sync SDK button
+        let canSync = !viewModel.isRunning && viewModel.isConfigured && viewModel.currentMode == .local
+        let syncItem = NSMenuItem(title: "Sync SDK", action: canSync ? #selector(syncSDK) : nil, keyEquivalent: "")
+        syncItem.target = self
+        menu.addItem(syncItem)
+
         // Cancel button
         let cancelItem = NSMenuItem(title: "Cancel", action: viewModel.isRunning ? #selector(cancelRun) : nil, keyEquivalent: "")
         cancelItem.target = self
@@ -141,6 +147,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func switchMode(_ sender: NSMenuItem) {
         let mode: SDKMode = sender.tag == 0 ? .local : .remote
         viewModel.switchTo(mode)
+    }
+
+    @objc private func syncSDK() {
+        viewModel.syncSDK()
     }
 
     @objc private func cancelRun() {
